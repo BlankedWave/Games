@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Neon Vector: Infinite Drift</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;700;800&display=swap');
+        
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            overflow: hidden;
+            background-color: #0f172a;
+            touch-action: none;
+        }
+
+        #gameCanvas {
+            image-rendering: antialiased;
+            display: block;
+        }
+
+        .glass {
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .neon-text {
+            text-shadow: 0 0 10px rgba(56, 189, 248, 0.8);
+        }
+
+        @keyframes pulse-slow {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .animate-pulse-slow {
+            animation: pulse-slow 2s infinite ease-in-out;
+        }
+    </style>
+</head>
+<body class="relative min-h-screen flex items-center justify-center">
+
+    <!-- Game HUD -->
+    <div id="hud" class="fixed top-6 left-6 right-6 z-10 flex justify-between items-start pointer-events-none opacity-0 transition-opacity duration-500">
+        <div class="glass p-4 rounded-2xl flex flex-col gap-1 min-w-[120px]">
+            <span class="text-xs uppercase tracking-widest text-sky-400 font-bold">Score</span>
+            <span id="scoreDisplay" class="text-3xl font-extrabold text-white tracking-tighter">0000</span>
+        </div>
+        <div class="glass p-4 rounded-2xl flex flex-col gap-1 items-end min-w-[120px]">
+            <span class="text-xs uppercase tracking-widest text-rose-400 font-bold">Best</span>
+            <span id="bestDisplay" class="text-2xl font-extrabold text-white tracking-tighter">0000</span>
+        </div>
+    </div>
+
+    <!-- Main Menu -->
+    <div id="menu" class="z-20 flex flex-col items-center gap-8 text-center px-4">
+        <div class="flex flex-col items-center gap-2">
+            <div class="bg-sky-500/20 p-4 rounded-3xl mb-4 border border-sky-500/50">
+                <i data-lucide="zap" class="w-12 h-12 text-sky-400"></i>
+            </div>
+            <h1 class="text-6xl md:text-8xl font-black text-white tracking-tight italic neon-text uppercase">Neon Vector</h1>
+            <p class="text-slate-400 text-lg md:text-xl font-medium max-w-md">Drift through the digital void. Don't touch the corruption.</p>
+        </div>
+
+        <div class="flex flex-col gap-4 w-full max-w-xs">
+            <button id="startBtn" class="btn btn-primary btn-lg rounded-2xl shadow-lg shadow-sky-500/20 text-xl font-bold border-none h-16 group">
+                <span class="group-hover:translate-x-1 transition-transform">START SEQUENCE</span>
+                <i data-lucide="play" class="w-6 h-6 ml-2 fill-current"></i>
+            </button>
+            <div class="text-slate-500 text-sm font-semibold flex items-center justify-center gap-4">
+                <span class="flex items-center gap-1"><i data-lucide="mouse-pointer-2" class="w-4 h-4"></i> MOVE</span>
+                <span class="flex items-center gap-1"><i data-lucide="shield-alert" class="w-4 h-4"></i> DODGE</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Game Over Screen -->
+    <div id="gameOver" class="fixed inset-0 z-30 flex flex-col items-center justify-center bg-slate-950/90 backdrop-blur-md hidden opacity-0 transition-opacity duration-500">
+        <div class="flex flex-col items-center gap-6 p-8 rounded-3xl text-center">
+            <h2 class="text-5xl font-black text-rose-500 tracking-tighter uppercase italic">System Failure</h2>
+            <div class="flex gap-8">
+                <div class="text-center">
+                    <p class="text-slate-400 text-sm uppercase tracking-widest mb-1">Final Score</p>
+                    <p id="finalScore" class="text-4xl font-black text-white">0</p>
+                </div>
+            </div>
+            <button id="restartBtn" class="btn btn-outline btn-lg border-2 border-sky-500 text-sky-400 hover:bg-sky-500 hover:text-white rounded-2xl w-full max-w-[240px] mt-4">
+                TRY AGAIN
+            </button>
+        </div>
+    </div>
+
+    <!-- Canvas -->
+    <canvas id="gameCanvas" class="absolute inset-0 w-full h-full"></canvas>
+
+    <script>
+        // --- Initialization ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const menu = document.getElementById('menu');
+        const hud = document.getElementById('hud');
+        const gameOverScreen = document.getElementById('gameOver');
+        const startBtn = document.getElementById('startBtn');
+        const restartBtn = document.getElementById('restartBtn');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const finalScoreDisplay = document.getElementById('finalScore');
+        const bestDisplay = document.getElementById('bestDisplay');
+
+        // State variables
+        let width, height, dpr;
+        let isPlaying = false;
+        let score = 0;
+        let highScore = localStorage.getItem('neon_high_score') || 0;
+        bestDisplay.innerText = String(highScore).padStart(4, '0');
+
+        // Player object
+        const player = {
+            x: 0,
+            y: 0,
+            targetX: 0,
+            targetY: 0,
+            size: 14,
+            angle: 0,
+            color: '#38bdf8',
+            trail: []
+        };
+
+        let obstacles = [];
+        let particles = [];
+        let gems = [];
+        let frameCount = 0;
+        let difficulty = 1;
+
+        // Initialize Lucide icons
+        lucide.createIcons();
+
+        function resize() {
+            dpr = window.devicePixelRatio || 1;
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width * dpr;
+            canvas.height = height * dpr;
+            canvas.style.width = width + 'px';
+            canvas.style.height = height + 'px';
+            ctx.scale(dpr, dpr);
+            
+            player.x = width / 2;
+            player.y = height / 2;
+            player.targetX = player.x;
+            player.targetY = player.y;
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+
+        // --- Input Handling ---
+        window.addEventListener('mousemove', (e) => {
+            player.targetX = e.clientX;
+            player.targetY = e.clientY;
+        });
+
+        window.addEventListener('touchmove', (e) => {
+            if (e.touches[0]) {
+                player.targetX = e.touches[0].clientX;
+                player.targetY = e.touches[0].clientY;
+            }
+            e.preventDefault();
+        }, { passive: false });
+
+        // --- Game Logic ---
+
+        function spawnObstacle() {
+            const size = 30 + Math.random() * 50;
+            let x, y, vx, vy;
+
+            // Spawn from edges
+            const edge = Math.floor(Math.random() * 4);
+            if (edge === 0) { // Top
+                x = Math.random() * width; y = -size;
+                vx = (Math.random() - 0.5) * 2; vy = 2 + Math.random() * 3 * difficulty;
+            } else if (edge === 1) { // Bottom
+                x = Math.random() * width; y = height + size;
+                vx = (Math.random() - 0.5) * 2; vy = -(2 + Math.random() * 3 * difficulty);
+            } else if (edge === 2) { // Left
+                x = -size; y = Math.random() * height;
+                vx = 2 + Math.random() * 3 * difficulty; vy = (Math.random() - 0.5) * 2;
+            } else { // Right
+                x = width + size; y = Math.random() * height;
+                vx = -(2 + Math.random() * 3 * difficulty); vy = (Math.random() - 0.5) * 2;
+            }
+
+            obstacles.push({ x, y, vx, vy, size, rotation: Math.random() * Math.PI, rotVel: (Math.random() - 0.5) * 0.05 });
+        }
+
+        function spawnGem() {
+            gems.push({
+                x: Math.random() * (width - 40) + 20,
+                y: Math.random() * (height - 40) + 20,
+                size: 8,
+                pulse: 0
+            });
+        }
+
+        function createExplosion(x, y, color) {
+            for (let i = 0; i < 15; i++) {
+                particles.push({
+                    x, y,
+                    vx: (Math.random() - 0.5) * 10,
+                    vy: (Math.random() - 0.5) * 10,
+                    life: 1.0,
+                    color
+                });
+            }
+        }
+
+        function resetGame() {
+            score = 0;
+            difficulty = 1;
+            obstacles = [];
+            gems = [];
+            particles = [];
+            player.trail = [];
+            frameCount = 0;
+            player.x = width / 2;
+            player.y = height / 2;
+            player.targetX = player.x;
+            player.targetY = player.y;
+            scoreDisplay.innerText = "0000";
+        }
+
+        function endGame() {
+            isPlaying = false;
+            if (score > highScore) {
+                highScore = score;
+                localStorage.setItem('neon_high_score', highScore);
+                bestDisplay.innerText = String(highScore).padStart(4, '0');
+            }
+            finalScoreDisplay.innerText = score;
+            gameOverScreen.classList.remove('hidden');
+            setTimeout(() => gameOverScreen.classList.replace('opacity-0', 'opacity-100'), 10);
+            hud.classList.replace('opacity-100', 'opacity-0');
+        }
+
+        function update() {
+            if (!isPlaying) return;
+
+            frameCount++;
+            difficulty = 1 + (frameCount / 2000);
+
+            // Interpolate player position
+            player.x += (player.targetX - player.x) * 0.15;
+            player.y += (player.targetY - player.y) * 0.15;
+
+            // Update angle based on movement
+            const dx = player.targetX - player.x;
+            const dy = player.targetY - player.y;
+            if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
+                player.angle = Math.atan2(dy, dx);
+            }
+
+            // Trail
+            player.trail.unshift({ x: player.x, y: player.y });
+            if (player.trail.length > 20) player.trail.pop();
+
+            // Obstacles
+            if (frameCount % Math.max(10, Math.floor(40 / difficulty)) === 0) spawnObstacle();
+            
+            obstacles.forEach((obs, index) => {
+                obs.x += obs.vx;
+                obs.y += obs.vy;
+                obs.rotation += obs.rotVel;
+
+                // Collision
+                const dist = Math.hypot(player.x - obs.x, player.y - obs.y);
+                if (dist < obs.size * 0.7 + player.size) {
+                    createExplosion(player.x, player.y, '#f43f5e');
+                    endGame();
+                }
+
+                if (obs.x < -100 || obs.x > width + 100 || obs.y < -100 || obs.y > height + 100) {
+                    obstacles.splice(index, 1);
+                }
+            });
+
+            // Gems
+            if (frameCount % 120 === 0 && gems.length < 5) spawnGem();
+            gems.forEach((gem, index) => {
+                gem.pulse += 0.1;
+                const dist = Math.hypot(player.x - gem.x, player.y - gem.y);
+                if (dist < gem.size + player.size + 10) {
+                    score += 100;
+                    scoreDisplay.innerText = String(score).padStart(4, '0');
+                    createExplosion(gem.x, gem.y, '#fbbf24');
+                    gems.splice(index, 1);
+                }
+            });
+
+            // Particles
+            particles.forEach((p, index) => {
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.02;
+                if (p.life <= 0) particles.splice(index, 1);
+            });
+            
+            score += 1; // Passive score
+            if (frameCount % 60 === 0) scoreDisplay.innerText = String(score).padStart(4, '0');
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, width, height);
+
+            // Draw Background Grid (Subtle)
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.05)';
+            ctx.lineWidth = 1;
+            const step = 60;
+            const offset = (frameCount % step);
+            for(let x = -offset; x < width; x += step) {
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+            }
+            for(let y = -offset; y < height; y += step) {
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+            }
+
+            // Draw Particles
+            particles.forEach(p => {
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.globalAlpha = 1;
+
+            // Draw Gems
+            gems.forEach(gem => {
+                const s = gem.size + Math.sin(gem.pulse) * 3;
+                ctx.fillStyle = '#fbbf24';
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = '#fbbf24';
+                ctx.save();
+                ctx.translate(gem.x, gem.y);
+                ctx.rotate(gem.pulse * 0.5);
+                ctx.fillRect(-s/2, -s/2, s, s);
+                ctx.restore();
+                ctx.shadowBlur = 0;
+            });
+
+            // Draw Obstacles
+            obstacles.forEach(obs => {
+                ctx.strokeStyle = '#f43f5e';
+                ctx.lineWidth = 2;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#f43f5e';
+                ctx.save();
+                ctx.translate(obs.x, obs.y);
+                ctx.rotate(obs.rotation);
+                ctx.strokeRect(-obs.size/2, -obs.size/2, obs.size, obs.size);
+                ctx.restore();
+                ctx.shadowBlur = 0;
+            });
+
+            // Draw Player Trail
+            if (isPlaying) {
+                ctx.beginPath();
+                ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
+                ctx.lineWidth = player.size;
+                ctx.lineCap = 'round';
+                player.trail.forEach((p, i) => {
+                    if (i === 0) ctx.moveTo(p.x, p.y);
+                    else ctx.lineTo(p.x, p.y);
+                });
+                ctx.stroke();
+
+                // Draw Player
+                ctx.save();
+                ctx.translate(player.x, player.y);
+                ctx.rotate(player.angle);
+                ctx.fillStyle = player.color;
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = player.color;
+                
+                // Ship Shape
+                ctx.beginPath();
+                ctx.moveTo(player.size, 0);
+                ctx.lineTo(-player.size, -player.size * 0.8);
+                ctx.lineTo(-player.size * 0.5, 0);
+                ctx.lineTo(-player.size, player.size * 0.8);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --- Interaction Flow ---
+
+        startBtn.addEventListener('click', () => {
+            menu.classList.add('hidden');
+            hud.classList.replace('opacity-0', 'opacity-100');
+            resetGame();
+            isPlaying = true;
+        });
+
+        restartBtn.addEventListener('click', () => {
+            gameOverScreen.classList.replace('opacity-100', 'opacity-0');
+            setTimeout(() => {
+                gameOverScreen.classList.add('hidden');
+                hud.classList.replace('opacity-0', 'opacity-100');
+                resetGame();
+                isPlaying = true;
+            }, 500);
+        });
+
+        // Start Loop
+        window.onload = () => {
+            gameLoop();
+        };
+
+    </script>
+</body>
+</html>
