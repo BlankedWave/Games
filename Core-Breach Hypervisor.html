@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CORE-BREACH // HYPERVISOR</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --neon-blue: #00f2ff;
+            --neon-pink: #ff00ea;
+            --bg-dark: #020617;
+        }
+        body {
+            background-color: var(--bg-dark);
+            color: var(--neon-blue);
+            font-family: 'Space Mono', monospace;
+            margin: 0;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas { display: block; filter: contrast(1.2) brightness(1.1); }
+        
+        /* FIX: Ensure UI layer doesn't block clicks to the canvas */
+        .ui-layer {
+            position: absolute;
+            inset: 0;
+            pointer-events: none; 
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 2rem;
+            z-index: 10;
+        }
+
+        /* FIX: Re-enable pointer events for specific interactive elements */
+        .panel, button {
+            pointer-events: auto; 
+        }
+
+        .panel {
+            background: rgba(2, 6, 23, 0.8);
+            border: 1px solid rgba(0, 242, 255, 0.3);
+            backdrop-filter: blur(8px);
+            padding: 1rem;
+        }
+
+        .glitch-text {
+            text-shadow: 2px 0 var(--neon-pink), -2px 0 var(--neon-blue);
+            animation: glitch 3s infinite;
+        }
+        @keyframes glitch {
+            0% { transform: translate(0); }
+            1% { transform: translate(-2px, 2px); }
+            2% { transform: translate(2px, -2px); }
+            3% { transform: translate(0); }
+        }
+        .scanlines {
+            position: fixed;
+            inset: 0;
+            background: linear-gradient(to bottom, transparent 50%, rgba(0,0,0,0.1) 50%);
+            background-size: 100% 4px;
+            z-index: 100;
+            pointer-events: none;
+        }
+        .crosshair {
+            position: fixed;
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--neon-blue);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 5;
+            mix-blend-mode: screen;
+            display: none; /* Hidden on mobile by default */
+        }
+        @media (min-width: 768px) {
+            .crosshair { display: block; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="scanlines"></div>
+<div id="crosshair" class="crosshair"></div>
+
+<div class="ui-layer">
+    <div class="flex justify-between items-start">
+        <div class="panel">
+            <div class="text-[10px] opacity-60 uppercase tracking-widest">System Load</div>
+            <div id="threat-level" class="text-2xl font-bold italic">STABLE</div>
+            <div class="mt-2 h-1 w-64 max-w-[40vw] bg-blue-900">
+                <div id="load-bar" class="h-full bg-cyan-400 transition-all duration-300" style="width: 100%"></div>
+            </div>
+        </div>
+        
+        <div class="panel text-right">
+            <div class="text-[10px] opacity-60 uppercase">Blocks Purged</div>
+            <div id="score" class="text-3xl font-bold font-mono">000000</div>
+        </div>
+    </div>
+
+    <div id="msg-center" class="text-center mb-12">
+        <h1 class="text-4xl font-black glitch-text tracking-tighter mb-2">HYPERVISOR_v4.0</h1>
+        <p class="text-xs opacity-50 uppercase tracking-[0.5em]">Clear the nodes // Save the Core</p>
+    </div>
+
+    <!-- Start/Game Over Screen -->
+    <div id="start-screen" class="fixed inset-0 bg-slate-950 flex flex-col items-center justify-center z-[200] pointer-events-auto">
+        <h2 id="screen-title" class="text-6xl font-black mb-8 italic tracking-tighter text-center px-4">CORE_BREACH</h2>
+        <div id="screen-desc" class="max-w-md text-center opacity-70 mb-12 text-sm leading-relaxed uppercase px-8">
+            Malicious packets detected in sector 7-G. <br>
+            Use high-yield pulse cannon to eliminate nodes. <br>
+            Don't let them reach the central stack.
+        </div>
+        <button id="main-btn" onclick="startGame()" class="border-2 border-cyan-400 px-12 py-4 hover:bg-cyan-400 hover:text-slate-950 transition-all font-bold tracking-widest uppercase active:scale-95">
+            Authorize Protocol
+        </button>
+    </div>
+</div>
+
+<canvas id="stage"></canvas>
+
+<script>
+    const canvas = document.getElementById('stage');
+    const ctx = canvas.getContext('2d');
+    const crosshair = document.getElementById('crosshair');
+    const startScreen = document.getElementById('start-screen');
+    
+    let width, height;
+    let gameActive = false;
+    let score = 0;
+    let threats = [];
+    let particles = [];
+    let projectiles = [];
+    let coreHealth = 100;
+    let spawnRate = 1500;
+    let lastSpawn = 0;
+
+    const COLORS = {
+        core: '#00f2ff',
+        virus: '#ff00ea',
+        shot: '#ffffff',
+        accent: '#334155'
+    };
+
+    function resize() {
+        width = window.innerWidth;
+        height = window.innerHeight;
+        canvas.width = width;
+        canvas.height = height;
+    }
+
+    window.addEventListener('resize', resize);
+    
+    // Crosshair logic for desktop
+    window.addEventListener('mousemove', e => {
+        crosshair.style.left = e.clientX + 'px';
+        crosshair.style.top = e.clientY + 'px';
+    });
+
+    // Input handling for both mouse and touch
+    function handleInput(e) {
+        if (!gameActive) return;
+        const x = e.clientX || (e.touches && e.touches[0].clientX);
+        const y = e.clientY || (e.touches && e.touches[0].clientY);
+        if (x !== undefined && y !== undefined) {
+            fire(x, y);
+        }
+    }
+
+    window.addEventListener('mousedown', handleInput);
+    window.addEventListener('touchstart', (e) => {
+        // Prevent default only if we are in active gameplay to allow buttons to work
+        if (gameActive) {
+            handleInput(e);
+            e.preventDefault();
+        }
+    }, { passive: false });
+
+    function fire(targetX, targetY) {
+        const angle = Math.atan2(targetY - height/2, targetX - width/2);
+        projectiles.push({
+            x: width/2,
+            y: height/2,
+            vx: Math.cos(angle) * 14, // Slightly faster projectile
+            vy: Math.sin(angle) * 14,
+            life: 100
+        });
+        
+        // Recoil shake effect
+        canvas.style.transform = `translate(${Math.random()*4-2}px, ${Math.random()*4-2}px)`;
+        setTimeout(() => canvas.style.transform = 'none', 50);
+    }
+
+    class Threat {
+        constructor() {
+            const angle = Math.random() * Math.PI * 2;
+            const dist = Math.max(width, height) * 0.7;
+            this.x = width/2 + Math.cos(angle) * dist;
+            this.y = height/2 + Math.sin(angle) * dist;
+            this.radius = 15 + Math.random() * 20;
+            this.color = COLORS.virus;
+            this.dead = false;
+            
+            const targetAngle = Math.atan2(height/2 - this.y, width/2 - this.x);
+            const speed = 1.2 + Math.random() * 2;
+            this.vx = Math.cos(targetAngle) * speed;
+            this.vy = Math.sin(targetAngle) * speed;
+            this.rotation = 0;
+            this.rotSpeed = (Math.random() - 0.5) * 0.1;
+        }
+
+        update() {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.rotation += this.rotSpeed;
+
+            const dist = Math.hypot(this.x - width/2, this.y - height/2);
+            if (dist < 60) {
+                this.dead = true;
+                coreHealth -= 10;
+                createExplosion(this.x, this.y, COLORS.virus, 20);
+                checkGameOver();
+            }
+        }
+
+        draw() {
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            ctx.rotate(this.rotation);
+            ctx.strokeStyle = this.color;
+            ctx.lineWidth = 2;
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = this.color;
+            
+            ctx.beginPath();
+            for(let i=0; i<6; i++) {
+                const a = (i / 6) * Math.PI * 2;
+                const r = this.radius * (i % 2 === 0 ? 1 : 0.6);
+                ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+            }
+            ctx.closePath();
+            ctx.stroke();
+            ctx.restore();
+        }
+    }
+
+    function createExplosion(x, y, color, count) {
+        for(let i=0; i<count; i++) {
+            particles.push({
+                x, y,
+                vx: (Math.random() - 0.5) * 12,
+                vy: (Math.random() - 0.5) * 12,
+                life: 1.0,
+                color: color,
+                size: Math.random() * 4
+            });
+        }
+    }
+
+    function startGame() {
+        startScreen.style.display = 'none';
+        gameActive = true;
+        score = 0;
+        coreHealth = 100;
+        threats = [];
+        projectiles = [];
+        particles = [];
+        spawnRate = 1500;
+        lastSpawn = performance.now();
+        resize();
+        requestAnimationFrame(loop);
+    }
+
+    function checkGameOver() {
+        if (coreHealth <= 0) {
+            gameActive = false;
+            coreHealth = 0;
+            startScreen.style.display = 'flex';
+            document.getElementById('screen-title').innerText = 'CORE_CRITICAL';
+            document.getElementById('screen-title').style.color = COLORS.virus;
+            document.getElementById('screen-desc').innerText = `CRITICAL SYSTEM FAILURE. DATA PURGED: ${score}`;
+            document.getElementById('main-btn').innerText = 'System Reboot';
+        }
+    }
+
+    function loop(time) {
+        if (!gameActive) return;
+
+        ctx.fillStyle = 'rgba(2, 6, 23, 0.25)';
+        ctx.fillRect(0, 0, width, height);
+
+        // Grid lines
+        ctx.strokeStyle = 'rgba(0, 242, 255, 0.05)';
+        ctx.lineWidth = 1;
+        const gridSize = 60;
+        for(let x=0; x<width; x+=gridSize) {
+            ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+        }
+        for(let y=0; y<height; y+=gridSize) {
+            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+        }
+
+        // Core Visualization
+        const pulse = Math.sin(time * 0.005) * 8;
+        ctx.shadowBlur = 20 + pulse;
+        ctx.shadowColor = COLORS.core;
+        ctx.strokeStyle = COLORS.core;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(width/2, height/2, 40 + pulse, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Spawning
+        if (time - lastSpawn > spawnRate) {
+            threats.push(new Threat());
+            lastSpawn = time;
+            spawnRate = Math.max(350, spawnRate * 0.98);
+        }
+
+        // Stats Update
+        document.getElementById('score').innerText = score.toString().padStart(6, '0');
+        document.getElementById('load-bar').style.width = coreHealth + '%';
+        const threatMsg = document.getElementById('threat-level');
+        if (coreHealth < 30) { threatMsg.innerText = 'CRITICAL'; threatMsg.style.color = COLORS.virus; }
+        else if (coreHealth < 60) { threatMsg.innerText = 'UNSTABLE'; threatMsg.style.color = '#facc15'; }
+        else { threatMsg.innerText = 'STABLE'; threatMsg.style.color = COLORS.core; }
+
+        // Particles
+        for(let i=particles.length-1; i>=0; i--) {
+            const p = particles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            p.life -= 0.02;
+            if(p.life <= 0) { particles.splice(i, 1); continue; }
+            ctx.fillStyle = p.color;
+            ctx.globalAlpha = p.life;
+            ctx.fillRect(p.x, p.y, p.size, p.size);
+        }
+        ctx.globalAlpha = 1;
+
+        // Projectiles
+        for(let i=projectiles.length-1; i>=0; i--) {
+            const p = projectiles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            
+            ctx.fillStyle = COLORS.shot;
+            ctx.shadowBlur = 10;
+            ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
+
+            threats.forEach(t => {
+                const d = Math.hypot(p.x - t.x, p.y - t.y);
+                if (d < t.radius) {
+                    t.dead = true;
+                    p.life = 0;
+                    score += 150;
+                    createExplosion(t.x, t.y, COLORS.virus, 15);
+                }
+            });
+
+            if (p.x < -50 || p.x > width + 50 || p.y < -50 || p.y > height + 50 || p.life <= 0) {
+                projectiles.splice(i, 1);
+            }
+        }
+
+        // Threats
+        for(let i=threats.length-1; i>=0; i--) {
+            const t = threats[i];
+            t.update();
+            t.draw();
+            if (t.dead) threats.splice(i, 1);
+        }
+
+        requestAnimationFrame(loop);
+    }
+
+    resize();
+</script>
+</body>
+</html>
