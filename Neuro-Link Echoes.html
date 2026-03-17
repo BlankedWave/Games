@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Neuro-Link: Echoes</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background-color: #05070a;
+            color: #34d399;
+            font-family: 'JetBrains Mono', monospace;
+            margin: 0;
+            overflow: hidden;
+            touch-action: none;
+        }
+
+        .crt::before {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0; left: 0; bottom: 0; right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            z-index: 100;
+            background-size: 100% 2px, 3px 100%;
+            pointer-events: none;
+        }
+
+        .scanline {
+            width: 100%;
+            height: 100px;
+            z-index: 101;
+            background: linear-gradient(0deg, rgba(0, 0, 0, 0) 0%, rgba(255, 255, 255, 0.05) 50%, rgba(0, 0, 0, 0) 100%);
+            opacity: 0.1;
+            position: absolute;
+            bottom: 100%;
+            animation: scanline 6s linear infinite;
+        }
+
+        @keyframes scanline {
+            0% { bottom: 100%; }
+            100% { bottom: -100px; }
+        }
+
+        .pad {
+            transition: all 0.1s;
+            border: 2px solid rgba(52, 211, 153, 0.2);
+            cursor: pointer;
+        }
+        .pad.active {
+            background-color: #34d399;
+            box-shadow: 0 0 30px #34d399;
+            transform: scale(0.95);
+        }
+        .pad.flash {
+            background-color: white;
+            box-shadow: 0 0 40px white;
+        }
+
+        .terminal-window {
+            background: rgba(10, 15, 20, 0.8);
+            border: 1px solid #34d399;
+            box-shadow: 0 0 20px rgba(52, 211, 153, 0.1);
+        }
+
+        .glitch {
+            animation: glitch 1s linear infinite;
+        }
+
+        @keyframes glitch {
+            2%, 64% { transform: translate(2px, 0) skew(0deg); }
+            4%, 60% { transform: translate(-2px, 0) skew(0deg); }
+            62% { transform: translate(0, 0) skew(5deg); }
+        }
+    </style>
+</head>
+<body class="crt flex flex-col items-center justify-center h-screen p-4">
+
+    <div class="scanline"></div>
+
+    <div id="intro" class="absolute inset-0 z-[200] bg-black flex flex-col items-center justify-center p-8 text-center">
+        <h1 class="text-4xl font-bold mb-4 glitch">NEURO-LINK // ECHOES</h1>
+        <p class="max-w-md mb-8 text-emerald-600/80 leading-relaxed uppercase text-xs tracking-widest">
+            A neural pattern matching protocol. Listen to the encrypted signals. Reconstruct the sequence. Failure results in immediate disconnection.
+        </p>
+        <button onclick="startProtocol()" class="border-2 border-emerald-400 px-8 py-3 hover:bg-emerald-400 hover:text-black transition-all font-bold tracking-[0.3em]">
+            INITIALIZE LINK
+        </button>
+    </div>
+
+    <div class="terminal-window w-full max-w-2xl p-6 flex flex-col gap-8">
+        <div class="flex justify-between items-center border-b border-emerald-900 pb-4">
+            <div>
+                <div class="text-[10px] opacity-50 uppercase">Link Integrity</div>
+                <div id="integrity" class="text-xl">100%</div>
+            </div>
+            <div class="text-center">
+                <div class="text-[10px] opacity-50 uppercase">Synaptic Level</div>
+                <div id="level" class="text-xl">01</div>
+            </div>
+            <div class="text-right">
+                <div class="text-[10px] opacity-50 uppercase">Identity Score</div>
+                <div id="score" class="text-xl">0000</div>
+            </div>
+        </div>
+
+        <div id="status-msg" class="text-center text-sm py-2 bg-emerald-950/30">WAITING FOR SIGNAL...</div>
+
+        <div class="grid grid-cols-2 gap-4 aspect-square max-w-[400px] mx-auto w-full">
+            <div id="pad-0" class="pad rounded-tl-3xl flex items-center justify-center text-3xl font-bold opacity-30" onclick="handlePadClick(0)">01</div>
+            <div id="pad-1" class="pad rounded-tr-3xl flex items-center justify-center text-3xl font-bold opacity-30" onclick="handlePadClick(1)">02</div>
+            <div id="pad-2" class="pad rounded-bl-3xl flex items-center justify-center text-3xl font-bold opacity-30" onclick="handlePadClick(2)">03</div>
+            <div id="pad-3" class="pad rounded-br-3xl flex items-center justify-center text-3xl font-bold opacity-30" onclick="handlePadClick(3)">04</div>
+        </div>
+
+        <div class="flex justify-between text-[10px] opacity-30 uppercase">
+            <span>Core: 0x882_Active</span>
+            <span id="instruction">Watch the sequence</span>
+        </div>
+    </div>
+
+    <script>
+        // Audio Setup
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const freqs = [261.63, 329.63, 392.00, 523.25]; // C4, E4, G4, C5
+
+        let state = {
+            sequence: [],
+            playerSequence: [],
+            level: 1,
+            score: 0,
+            integrity: 100,
+            isPlayingSequence: false,
+            active: false
+        };
+
+        function playTone(index, duration = 300) {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(freqs[index], audioCtx.currentTime);
+            
+            gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration/1000);
+            
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            osc.start();
+            osc.stop(audioCtx.currentTime + duration/1000);
+
+            // Visual flash
+            const pad = document.getElementById(`pad-${index}`);
+            pad.classList.add('active');
+            pad.style.opacity = "1";
+            setTimeout(() => {
+                pad.classList.remove('active');
+                pad.style.opacity = "0.3";
+            }, duration);
+        }
+
+        function startProtocol() {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            document.getElementById('intro').classList.add('hidden');
+            state.active = true;
+            nextLevel();
+        }
+
+        function nextLevel() {
+            state.playerSequence = [];
+            state.isPlayingSequence = true;
+            document.getElementById('status-msg').innerText = "INCOMING SIGNAL...";
+            document.getElementById('instruction').innerText = "WATCH AND LISTEN";
+            
+            // Add new step
+            state.sequence.push(Math.floor(Math.random() * 4));
+            
+            // Play sequence
+            let i = 0;
+            const interval = setInterval(() => {
+                playTone(state.sequence[i]);
+                i++;
+                if (i >= state.sequence.length) {
+                    clearInterval(interval);
+                    state.isPlayingSequence = false;
+                    document.getElementById('status-msg').innerText = "AWAITING RECONSTRUCTION";
+                    document.getElementById('instruction').innerText = "REPEAT THE PATTERN";
+                }
+            }, 600);
+        }
+
+        function handlePadClick(index) {
+            if (!state.active || state.isPlayingSequence) return;
+
+            playTone(index, 150);
+            state.playerSequence.push(index);
+
+            const currentIdx = state.playerSequence.length - 1;
+            
+            if (state.playerSequence[currentIdx] !== state.sequence[currentIdx]) {
+                // Wrong step
+                fail();
+                return;
+            }
+
+            if (state.playerSequence.length === state.sequence.length) {
+                // Level complete
+                state.score += 100 * state.level;
+                state.level++;
+                updateUI();
+                setTimeout(nextLevel, 1000);
+            }
+        }
+
+        function fail() {
+            state.integrity -= 25;
+            updateUI();
+            
+            const msg = document.getElementById('status-msg');
+            msg.innerText = "PATTERN ERROR // INTEGRITY COMPROMISED";
+            msg.style.color = "#ef4444";
+
+            if (state.integrity <= 0) {
+                state.active = false;
+                setTimeout(() => {
+                    document.getElementById('intro').classList.remove('hidden');
+                    document.getElementById('intro').innerHTML = `
+                        <h1 class="text-4xl font-bold mb-4 text-red-600">CONNECTION SEVERED</h1>
+                        <p class="mb-8 opacity-60">Memory buffer overflow at level ${state.level}</p>
+                        <button onclick="location.reload()" class="border-2 border-red-600 text-red-600 px-8 py-3 hover:bg-red-600 hover:text-black transition-all font-bold">RE-ESTABLISH LINK</button>
+                    `;
+                }, 1000);
+            } else {
+                state.playerSequence = [];
+                state.isPlayingSequence = true;
+                setTimeout(() => {
+                    msg.style.color = "#34d399";
+                    // Replay current sequence
+                    let i = 0;
+                    const interval = setInterval(() => {
+                        playTone(state.sequence[i]);
+                        i++;
+                        if (i >= state.sequence.length) {
+                            clearInterval(interval);
+                            state.isPlayingSequence = false;
+                        }
+                    }, 600);
+                }, 1000);
+            }
+        }
+
+        function updateUI() {
+            document.getElementById('score').innerText = state.score.toString().padStart(4, '0');
+            document.getElementById('level').innerText = state.level.toString().padStart(2, '0');
+            document.getElementById('integrity').innerText = state.integrity + "%";
+            
+            const integrityColor = state.integrity < 50 ? "#ef4444" : "#34d399";
+            document.getElementById('integrity').style.color = integrityColor;
+        }
+    </script>
+</body>
+</html>
