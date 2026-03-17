@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Neon-Stash: Vault Breaker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Syncopate:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --neon-gold: #ffcc00;
+            --neon-blue: #00d9ff;
+            --neon-red: #ff3e3e;
+            --bg-dark: #0a0a0f;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: var(--bg-dark);
+            font-family: 'Fira Code', monospace;
+            color: white;
+            touch-action: none;
+        }
+
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+
+        .ui-panel {
+            position: absolute;
+            background: rgba(10, 10, 15, 0.85);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(0, 217, 255, 0.3);
+            border-radius: 4px;
+            pointer-events: auto;
+        }
+
+        .terminal-text {
+            color: var(--neon-blue);
+            text-shadow: 0 0 5px var(--neon-blue);
+        }
+
+        .menu-screen {
+            position: absolute;
+            inset: 0;
+            background: var(--bg-dark);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+
+        .menu-screen.hidden {
+            display: none;
+        }
+
+        .btn-glitch {
+            font-family: 'Syncopate', sans-serif;
+            border: 1px solid var(--neon-gold);
+            color: var(--neon-gold);
+            padding: 12px 32px;
+            transition: all 0.2s;
+            cursor: pointer;
+            background: transparent;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+        }
+
+        .btn-glitch:hover {
+            background: var(--neon-gold);
+            color: black;
+            box-shadow: 0 0 20px var(--neon-gold);
+        }
+
+        .stat-label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            color: #64748b;
+        }
+
+        .controls-hint {
+            position: absolute;
+            bottom: 2rem;
+            width: 100%;
+            text-align: center;
+            pointer-events: none;
+            color: #475569;
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+<body>
+
+<div id="startScreen" class="menu-screen">
+    <h1 class="text-5xl font-bold mb-2 tracking-tighter terminal-text" style="font-family: 'Syncopate';">NEON-STASH</h1>
+    <p class="mb-12 text-slate-500 tracking-widest text-xs">// GRID_INFILTRATION_V4.0</p>
+    <button class="btn-glitch" onclick="startGame()">Bypass Security</button>
+</div>
+
+<div id="deathScreen" class="menu-screen hidden">
+    <h2 class="text-4xl font-bold mb-4 text-red-500" style="font-family: 'Syncopate';">CONNECTION LOST</h2>
+    <p id="finalScore" class="mb-8 text-slate-400"></p>
+    <button class="btn-glitch" onclick="startGame()">Reconnect</button>
+</div>
+
+<div class="absolute top-6 left-6 flex gap-4 pointer-events-none">
+    <div class="ui-panel p-3 min-w-[120px]">
+        <div class="stat-label">Frags</div>
+        <div id="scoreVal" class="text-xl font-bold terminal-text">0</div>
+    </div>
+    <div class="ui-panel p-3 min-w-[120px]">
+        <div class="stat-label">Encryption</div>
+        <div id="levelVal" class="text-xl font-bold text-yellow-400">1</div>
+    </div>
+</div>
+
+<div class="controls-hint">
+    SWIPE OR USE ARROW KEYS TO MOVE <br>
+    ENTITIES MOVE WHEN YOU MOVE
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // Constants
+    const GRID_SIZE = 60;
+    const COLORS = {
+        player: '#00d9ff',
+        enemy: '#ff3e3e',
+        coin: '#ffcc00',
+        wall: '#1e293b'
+    };
+
+    // State
+    let game = {
+        active: false,
+        score: 0,
+        level: 1,
+        gridW: 0,
+        gridH: 0,
+        player: { x: 2, y: 2 },
+        enemies: [],
+        coins: [],
+        walls: [],
+        offset: { x: 0, y: 0 },
+        turnCount: 0
+    };
+
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        game.gridW = Math.floor(canvas.width / GRID_SIZE);
+        game.gridH = Math.floor(canvas.height / GRID_SIZE);
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // Input
+    window.addEventListener('keydown', (e) => {
+        if (!game.active) return;
+        if (e.key === 'ArrowUp' || e.key === 'w') movePlayer(0, -1);
+        if (e.key === 'ArrowDown' || e.key === 's') movePlayer(0, 1);
+        if (e.key === 'ArrowLeft' || e.key === 'a') movePlayer(-1, 0);
+        if (e.key === 'ArrowRight' || e.key === 'd') movePlayer(1, 0);
+    });
+
+    // Touch Swipe Logic
+    let touchStart = null;
+    window.addEventListener('touchstart', e => touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY });
+    window.addEventListener('touchend', e => {
+        if (!touchStart || !game.active) return;
+        const dx = e.changedTouches[0].clientX - touchStart.x;
+        const dy = e.changedTouches[0].clientY - touchStart.y;
+        if (Math.abs(dx) > Math.abs(dy)) {
+            if (Math.abs(dx) > 30) movePlayer(dx > 0 ? 1 : -1, 0);
+        } else {
+            if (Math.abs(dy) > 30) movePlayer(dy > 0 ? 0 : 1, dy > 0 ? 1 : -1);
+        }
+        touchStart = null;
+    });
+
+    function startGame() {
+        game.active = true;
+        game.score = 0;
+        game.level = 1;
+        game.player = { x: Math.floor(game.gridW/2), y: Math.floor(game.gridH/2) };
+        game.enemies = [];
+        game.coins = [];
+        game.walls = [];
+        
+        generateMap();
+        updateUI();
+        
+        document.getElementById('startScreen').classList.add('hidden');
+        document.getElementById('deathScreen').classList.add('hidden');
+        render();
+    }
+
+    function generateMap() {
+        game.coins = [];
+        game.enemies = [];
+        game.walls = [];
+
+        // Random walls
+        for (let i = 0; i < 15; i++) {
+            const wx = Math.floor(Math.random() * game.gridW);
+            const wy = Math.floor(Math.random() * game.gridH);
+            if (wx !== game.player.x || wy !== game.player.y) {
+                game.walls.push({ x: wx, y: wy });
+            }
+        }
+
+        // Coins
+        for (let i = 0; i < 5; i++) {
+            spawnEntity(game.coins);
+        }
+
+        // Enemies
+        for (let i = 0; i < 2 + Math.floor(game.level/2); i++) {
+            spawnEntity(game.enemies);
+        }
+    }
+
+    function spawnEntity(arr) {
+        let x, y, tries = 0;
+        do {
+            x = Math.floor(Math.random() * game.gridW);
+            y = Math.floor(Math.random() * game.gridH);
+            tries++;
+        } while (isOccupied(x, y) && tries < 100);
+        arr.push({ x, y });
+    }
+
+    function isOccupied(x, y) {
+        if (x === game.player.x && y === game.player.y) return true;
+        if (game.walls.some(w => w.x === x && w.y === y)) return true;
+        if (game.enemies.some(e => e.x === x && e.y === y)) return true;
+        if (game.coins.some(c => c.x === x && c.y === y)) return true;
+        return false;
+    }
+
+    function movePlayer(dx, dy) {
+        const nx = game.player.x + dx;
+        const ny = game.player.y + dy;
+
+        // Bounds check
+        if (nx < 0 || nx >= game.gridW || ny < 0 || ny >= game.gridH) return;
+        
+        // Wall check
+        if (game.walls.some(w => w.x === nx && w.y === ny)) return;
+
+        game.player.x = nx;
+        game.player.y = ny;
+
+        // Coin collection
+        const coinIdx = game.coins.findIndex(c => c.x === nx && c.y === ny);
+        if (coinIdx !== -1) {
+            game.score += 10;
+            game.coins.splice(coinIdx, 1);
+            if (game.coins.length === 0) nextLevel();
+        }
+
+        processTurn();
+        render();
+        updateUI();
+    }
+
+    function processTurn() {
+        // Enemy AI
+        game.enemies.forEach(e => {
+            const dx = game.player.x - e.x;
+            const dy = game.player.y - e.y;
+
+            let mx = 0, my = 0;
+            if (Math.abs(dx) > Math.abs(dy)) mx = dx > 0 ? 1 : -1;
+            else my = dy > 0 ? 1 : -1;
+
+            const nx = e.x + mx;
+            const ny = e.y + my;
+
+            // Enemies only move if the space is not a wall or another enemy
+            if (!game.walls.some(w => w.x === nx && w.y === ny) && 
+                !game.enemies.some(en => en !== e && en.x === nx && en.y === ny)) {
+                e.x = nx;
+                e.y = ny;
+            }
+
+            // Death check
+            if (e.x === game.player.x && e.y === game.player.y) {
+                gameOver();
+            }
+        });
+    }
+
+    function nextLevel() {
+        game.level++;
+        generateMap();
+    }
+
+    function updateUI() {
+        document.getElementById('scoreVal').innerText = game.score;
+        document.getElementById('levelVal').innerText = game.level;
+    }
+
+    function gameOver() {
+        game.active = false;
+        document.getElementById('deathScreen').classList.remove('hidden');
+        document.getElementById('finalScore').innerText = `TOTAL FRAGS RETRIEVED: ${game.score}`;
+    }
+
+    function render() {
+        if (!game.active) return;
+        ctx.fillStyle = '#0a0a0f';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw Grid lines
+        ctx.strokeStyle = '#1e1e2e';
+        ctx.lineWidth = 1;
+        for (let i = 0; i <= game.gridW; i++) {
+            ctx.beginPath(); ctx.moveTo(i * GRID_SIZE, 0); ctx.lineTo(i * GRID_SIZE, game.gridH * GRID_SIZE); ctx.stroke();
+        }
+        for (let j = 0; j <= game.gridH; j++) {
+            ctx.beginPath(); ctx.moveTo(0, j * GRID_SIZE); ctx.lineTo(game.gridW * GRID_SIZE, j * GRID_SIZE); ctx.stroke();
+        }
+
+        // Draw Walls
+        ctx.fillStyle = COLORS.wall;
+        game.walls.forEach(w => {
+            ctx.fillRect(w.x * GRID_SIZE + 4, w.y * GRID_SIZE + 4, GRID_SIZE - 8, GRID_SIZE - 8);
+        });
+
+        // Draw Coins
+        game.coins.forEach(c => {
+            const centerX = c.x * GRID_SIZE + GRID_SIZE/2;
+            const centerY = c.y * GRID_SIZE + GRID_SIZE/2;
+            ctx.fillStyle = COLORS.coin;
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = COLORS.coin;
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 8, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        });
+
+        // Draw Enemies
+        game.enemies.forEach(e => {
+            ctx.fillStyle = COLORS.enemy;
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = COLORS.enemy;
+            ctx.beginPath();
+            ctx.moveTo(e.x * GRID_SIZE + 10, e.y * GRID_SIZE + 10);
+            ctx.lineTo(e.x * GRID_SIZE + GRID_SIZE - 10, e.y * GRID_SIZE + 10);
+            ctx.lineTo(e.x * GRID_SIZE + GRID_SIZE/2, e.y * GRID_SIZE + GRID_SIZE - 10);
+            ctx.closePath();
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        });
+
+        // Draw Player
+        ctx.fillStyle = COLORS.player;
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = COLORS.player;
+        const pX = game.player.x * GRID_SIZE + 10;
+        const pY = game.player.y * GRID_SIZE + 10;
+        ctx.fillRect(pX, pY, GRID_SIZE - 20, GRID_SIZE - 20);
+        ctx.shadowBlur = 0;
+        
+        // Inner player detail
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(pX + 5, pY + 5, GRID_SIZE - 30, GRID_SIZE - 30);
+    }
+
+    // Initial draw to set background
+    ctx.fillStyle = '#0a0a0f';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+</script>
+</body>
+</html>
