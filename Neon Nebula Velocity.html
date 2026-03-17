@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Neon Nebula: Velocity</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --neon-blue: #00f2ff;
+            --neon-pink: #ff00ff;
+            --neon-purple: #bc13fe;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #050505;
+            font-family: 'Inter', sans-serif;
+            touch-action: none;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        canvas {
+            display: block;
+            image-rendering: pixelated; /* Sharp lines for neon */
+        }
+
+        .ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 2rem;
+            z-index: 10;
+        }
+
+        .glass {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 1rem;
+            pointer-events: auto;
+        }
+
+        .neon-text {
+            font-family: 'Orbitron', sans-serif;
+            text-shadow: 0 0 10px var(--neon-blue), 0 0 20px var(--neon-blue);
+            color: #fff;
+        }
+
+        .menu-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 50;
+            opacity: 1;
+            transition: opacity 0.3s ease;
+        }
+
+        .menu-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .btn-neon {
+            background: transparent;
+            border: 2px solid var(--neon-blue);
+            color: var(--neon-blue);
+            padding: 1rem 3rem;
+            font-family: 'Orbitron', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-weight: bold;
+            transition: all 0.2s;
+            cursor: pointer;
+            box-shadow: 0 0 15px rgba(0, 242, 255, 0.3);
+        }
+
+        .btn-neon:hover {
+            background: var(--neon-blue);
+            color: #000;
+            box-shadow: 0 0 30px var(--neon-blue);
+        }
+
+        .stats-box {
+            display: flex;
+            gap: 2rem;
+        }
+
+        .mobile-controls {
+            position: absolute;
+            bottom: 2rem;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            padding: 0 2rem;
+            display: none; /* Only show on touch */
+        }
+
+        @media (pointer: coarse) {
+            .mobile-controls { display: flex; }
+            .desktop-hint { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- Initial Menu -->
+    <div id="mainMenu" class="menu-overlay">
+        <h1 class="text-6xl md:text-8xl neon-text mb-4 font-black">VELOCITY</h1>
+        <p class="text-blue-400 mb-8 font-light tracking-widest desktop-hint text-sm">USE [ARROWS] OR [WASD] TO STEER</p>
+        <button class="btn-neon" onclick="startGame()">Initiate Link</button>
+    </div>
+
+    <!-- Death Menu -->
+    <div id="deathMenu" class="menu-overlay hidden">
+        <h2 class="text-4xl md:text-6xl text-red-500 font-bold mb-2 neon-text" style="--neon-blue: #f00">SYSTEM CRITICAL</h2>
+        <p id="finalScore" class="text-xl text-white mb-8"></p>
+        <button class="btn-neon" onclick="startGame()">Relaunch</button>
+    </div>
+
+    <!-- HUD -->
+    <div class="ui-layer">
+        <div class="flex justify-between items-start">
+            <div class="glass p-4">
+                <div class="text-xs text-blue-300 uppercase font-bold mb-1">Integrity</div>
+                <div class="w-48 h-2 bg-gray-800 rounded-full overflow-hidden border border-white/10">
+                    <div id="healthBar" class="h-full bg-cyan-400 transition-all duration-300" style="width: 100%"></div>
+                </div>
+            </div>
+            <div class="glass p-4 text-right">
+                <div class="text-xs text-pink-400 uppercase font-bold">Distance</div>
+                <div id="scoreLabel" class="text-2xl font-black text-white neon-text" style="--neon-blue: #ff00ff">0000</div>
+            </div>
+        </div>
+
+        <div class="mobile-controls">
+            <div id="btnLeft" class="w-24 h-24 glass flex items-center justify-center text-4xl text-white opacity-50">←</div>
+            <div id="btnRight" class="w-24 h-24 glass flex items-center justify-center text-4xl text-white opacity-50">→</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    /** @type {HTMLCanvasElement} */
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    
+    // Game Constants
+    const PLAYER_SIZE = 30;
+    const OBSTACLE_SPEED_MIN = 300;
+    const SPAWN_RATE = 1000; // ms
+    
+    // State
+    let gameActive = false;
+    let score = 0;
+    let health = 100;
+    let lastTime = 0;
+    let spawnTimer = 0;
+    let difficulty = 1;
+    let shakeAmount = 0;
+
+    const player = {
+        x: 0,
+        y: 0,
+        width: 34,
+        height: 44,
+        targetX: 0,
+        velocity: 0,
+        rotation: 0
+    };
+
+    let obstacles = [];
+    let particles = [];
+    let stars = [];
+
+    // Keys
+    const keys = {};
+    window.addEventListener('keydown', e => keys[e.code] = true);
+    window.addEventListener('keyup', e => keys[e.code] = false);
+
+    // Initialize Canvas
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        player.y = canvas.height * 0.85;
+        player.x = canvas.width / 2;
+        player.targetX = player.x;
+        
+        // Reset stars
+        stars = [];
+        for(let i=0; i<150; i++) {
+            stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 2,
+                speed: Math.random() * 2 + 1
+            });
+        }
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    function startGame() {
+        document.getElementById('mainMenu').classList.add('hidden');
+        document.getElementById('deathMenu').classList.add('hidden');
+        health = 100;
+        score = 0;
+        difficulty = 1;
+        obstacles = [];
+        particles = [];
+        gameActive = true;
+        updateUI();
+        requestAnimationFrame(gameLoop);
+    }
+
+    function createExplosion(x, y, color) {
+        for(let i=0; i<15; i++) {
+            particles.push({
+                x, y,
+                vx: (Math.random() - 0.5) * 10,
+                vy: (Math.random() - 0.5) * 10,
+                life: 1.0,
+                color: color
+            });
+        }
+        shakeAmount = 15;
+    }
+
+    function spawnObstacle() {
+        const size = 30 + Math.random() * 40;
+        obstacles.push({
+            x: Math.random() * (canvas.width - size),
+            y: -size,
+            w: size,
+            h: size,
+            speed: (OBSTACLE_SPEED_MIN + Math.random() * 200) * difficulty,
+            color: Math.random() > 0.5 ? '#bc13fe' : '#ff00ff',
+            rot: 0,
+            rotSpeed: (Math.random() - 0.5) * 0.1
+        });
+    }
+
+    function updateUI() {
+        document.getElementById('scoreLabel').innerText = Math.floor(score).toString().padStart(4, '0');
+        document.getElementById('healthBar').style.width = health + '%';
+        if (health < 30) document.getElementById('healthBar').classList.replace('bg-cyan-400', 'bg-red-500');
+        else document.getElementById('healthBar').classList.replace('bg-red-500', 'bg-cyan-400');
+    }
+
+    function gameOver() {
+        gameActive = false;
+        document.getElementById('deathMenu').classList.remove('hidden');
+        document.getElementById('finalScore').innerText = `TOTAL DISTANCE: ${Math.floor(score)}`;
+    }
+
+    function gameLoop(timestamp) {
+        if(!gameActive) return;
+
+        const dt = (timestamp - lastTime) / 1000;
+        lastTime = timestamp;
+
+        if (dt > 0.1) { requestAnimationFrame(gameLoop); return; } // Pause-tab protection
+
+        // 1. Logic
+        update(dt);
+        
+        // 2. Render
+        draw();
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    function update(dt) {
+        score += dt * 10 * difficulty;
+        difficulty += dt * 0.02;
+        spawnTimer += dt * 1000;
+
+        if(spawnTimer > (SPAWN_RATE / Math.sqrt(difficulty))) {
+            spawnObstacle();
+            spawnTimer = 0;
+        }
+
+        // Screen Shake decay
+        if(shakeAmount > 0) shakeAmount *= 0.9;
+
+        // Player Movement
+        let moveDir = 0;
+        if(keys['ArrowLeft'] || keys['KeyA']) moveDir = -1;
+        if(keys['ArrowRight'] || keys['KeyD']) moveDir = 1;
+        
+        // Mobile overrides
+        const btnL = document.getElementById('btnLeft');
+        const btnR = document.getElementById('btnRight');
+        // Simple touch detection (simplified logic)
+        
+        const speed = 700 * difficulty;
+        player.x += moveDir * speed * dt;
+        player.rotation = moveDir * 0.2;
+
+        // Keep player in bounds
+        player.x = Math.max(player.width, Math.min(canvas.width - player.width, player.x));
+
+        // Background Stars
+        stars.forEach(s => {
+            s.y += s.speed * difficulty * 2;
+            if(s.y > canvas.height) {
+                s.y = 0;
+                s.x = Math.random() * canvas.width;
+            }
+        });
+
+        // Obstacles
+        for(let i = obstacles.length - 1; i >= 0; i--) {
+            const o = obstacles[i];
+            o.y += o.speed * dt;
+            o.rot += o.rotSpeed;
+
+            // Collision Check (AABB with slight padding)
+            if (
+                player.x - player.width/2 < o.x + o.w &&
+                player.x + player.width/2 > o.x &&
+                player.y - player.height/2 < o.y + o.h &&
+                player.y + player.height/2 > o.y
+            ) {
+                health -= 25;
+                createExplosion(o.x + o.w/2, o.y + o.h/2, o.color);
+                obstacles.splice(i, 1);
+                updateUI();
+                if(health <= 0) gameOver();
+                continue;
+            }
+
+            if(o.y > canvas.height) obstacles.splice(i, 1);
+        }
+
+        // Particles
+        for(let i = particles.length - 1; i >= 0; i--) {
+            const p = particles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            p.life -= dt * 1.5;
+            if(p.life <= 0) particles.splice(i, 1);
+        }
+    }
+
+    function draw() {
+        // Clear with slight motion blur
+        ctx.fillStyle = '#050505';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.save();
+        // Camera Shake
+        if(shakeAmount > 0.5) {
+            ctx.translate((Math.random() - 0.5) * shakeAmount, (Math.random() - 0.5) * shakeAmount);
+        }
+
+        // Draw Stars
+        ctx.fillStyle = '#fff';
+        stars.forEach(s => {
+            ctx.globalAlpha = s.size / 2;
+            ctx.fillRect(s.x, s.y, s.size, s.size);
+        });
+        ctx.globalAlpha = 1;
+
+        // Draw Obstacles
+        obstacles.forEach(o => {
+            ctx.save();
+            ctx.translate(o.x + o.w/2, o.y + o.h/2);
+            ctx.rotate(o.rot);
+            
+            // Neon Glow
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = o.color;
+            ctx.strokeStyle = o.color;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(-o.w/2, -o.h/2, o.w, o.h);
+            
+            // Inner Fill
+            ctx.fillStyle = o.color + '33';
+            ctx.fillRect(-o.w/2, -o.h/2, o.w, o.h);
+            ctx.restore();
+        });
+
+        // Draw Particles
+        particles.forEach(p => {
+            ctx.globalAlpha = p.life;
+            ctx.fillStyle = p.color;
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = p.color;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+            ctx.fill();
+        });
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1;
+
+        // Draw Player Ship
+        ctx.save();
+        ctx.translate(player.x, player.y);
+        ctx.rotate(player.rotation);
+        
+        // Engine Trail
+        const trailGradient = ctx.createLinearGradient(0, 0, 0, 40);
+        trailGradient.addColorStop(0, '#00f2ff');
+        trailGradient.addColorStop(1, 'transparent');
+        ctx.fillStyle = trailGradient;
+        ctx.beginPath();
+        ctx.moveTo(-10, 15);
+        ctx.lineTo(10, 15);
+        ctx.lineTo(0, 15 + Math.random() * 30);
+        ctx.fill();
+
+        // Ship Body
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = '#00f2ff';
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(0, -25); // Nose
+        ctx.lineTo(17, 15);  // Right
+        ctx.lineTo(0, 5);    // Back center
+        ctx.lineTo(-17, 15); // Left
+        ctx.closePath();
+        ctx.stroke();
+        ctx.fillStyle = '#0a1a2a';
+        ctx.fill();
+
+        // Cockpit
+        ctx.fillStyle = '#00f2ff';
+        ctx.beginPath();
+        ctx.arc(0, -5, 4, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.restore();
+        ctx.restore();
+    }
+
+    // Mobile Input Handlers
+    const btnLeft = document.getElementById('btnLeft');
+    const btnRight = document.getElementById('btnRight');
+    
+    const handleTouch = (btn, code, state) => {
+        btn.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            keys[code] = true;
+            btn.style.opacity = "1";
+        });
+        btn.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            keys[code] = false;
+            btn.style.opacity = "0.5";
+        });
+    };
+
+    handleTouch(btnLeft, 'ArrowLeft');
+    handleTouch(btnRight, 'ArrowRight');
+
+</script>
+</body>
+</html>
