@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Glitch-Runner: Synthwave Escape</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@300;700;900&display=swap" rel="stylesheet">
+    <style>
+        body { margin: 0; overflow: hidden; background: #0a001a; font-family: 'Exo 2', sans-serif; color: #ff00ff; }
+        canvas { display: block; touch-action: none; }
+        
+        .crt-overlay {
+            position: fixed;
+            inset: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03));
+            background-size: 100% 3px, 3px 100%;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .hud {
+            position: absolute;
+            top: 2rem;
+            left: 2rem;
+            right: 2rem;
+            display: flex;
+            justify-content: space-between;
+            pointer-events: none;
+            z-index: 50;
+        }
+
+        .stat-card {
+            background: rgba(15, 0, 30, 0.8);
+            border: 2px solid #ff00ff;
+            box-shadow: 0 0 15px #ff00ff88;
+            padding: 1rem;
+            clip-path: polygon(0 0, 100% 0, 100% 70%, 80% 100%, 0 100%);
+        }
+
+        .menu-screen {
+            position: absolute;
+            inset: 0;
+            background: rgba(10, 0, 26, 0.95);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 200;
+            transition: opacity 0.5s ease;
+        }
+
+        .btn-start {
+            background: transparent;
+            border: 3px solid #00ffff;
+            color: #00ffff;
+            padding: 1rem 3rem;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 5px;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 0 10px #00ffff44;
+        }
+
+        .btn-start:hover {
+            background: #00ffff;
+            color: #000;
+            box-shadow: 0 0 30px #00ffff;
+        }
+
+        .mobile-controls {
+            position: absolute;
+            bottom: 3rem;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            gap: 5rem;
+            pointer-events: none;
+        }
+
+        .touch-zone {
+            width: 80px;
+            height: 80px;
+            border: 2px solid #ff00ff;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0.3;
+            pointer-events: auto;
+        }
+    </style>
+</head>
+<body>
+
+<div class="crt-overlay"></div>
+
+<div id="startMenu" class="menu-screen">
+    <h1 class="text-6xl md:text-8xl font-black italic mb-2" style="text-shadow: 4px 4px #00ffff, -4px -4px #ff00ff;">GLITCH_RUN</h1>
+    <p class="text-cyan-400 mb-12 tracking-[0.6em] text-sm uppercase">Secure Path Infiltration Active</p>
+    <button class="btn-start" onclick="initGame()">Login</button>
+</div>
+
+<div class="hud">
+    <div class="stat-card">
+        <div class="text-[10px] uppercase opacity-60">Sync Stream</div>
+        <div id="score" class="text-2xl font-bold tracking-tighter">00000</div>
+    </div>
+    <div class="stat-card text-right">
+        <div class="text-[10px] uppercase opacity-60">Stability</div>
+        <div id="stability" class="text-2xl font-bold text-cyan-400">100%</div>
+    </div>
+</div>
+
+<div class="mobile-controls">
+    <div class="touch-zone" id="leftBtn">←</div>
+    <div class="touch-zone" id="rightBtn">→</div>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Game Constants
+    const TILE_W = 60;
+    const TILE_H = 30;
+    const SPEED = 4;
+    // ADJUSTMENT: PLAYER_TILE_OFFSET defines how many tiles ahead of the camera "start" the player is.
+    // Reducing this from 12 to 4 moves the player further back (downwards) in the view.
+    const PLAYER_TILE_OFFSET = 4; 
+    
+    let state = {
+        running: false,
+        score: 0,
+        playerPos: 1, // 0, 1, 2 (lanes)
+        tiles: [],
+        cameraY: 0,
+        speedMultiplier: 1,
+        stability: 100,
+        colors: {
+            bg: '#0a001a',
+            primary: '#ff00ff',
+            secondary: '#00ffff',
+            grid: '#2a004d'
+        }
+    };
+
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // Input
+    window.addEventListener('keydown', e => {
+        if (e.key === 'ArrowLeft') move(-1);
+        if (e.key === 'ArrowRight') move(1);
+    });
+
+    document.getElementById('leftBtn').addEventListener('touchstart', (e) => { e.preventDefault(); move(-1); });
+    document.getElementById('rightBtn').addEventListener('touchstart', (e) => { e.preventDefault(); move(1); });
+
+    function move(dir) {
+        if (!state.running) return;
+        state.playerPos = Math.max(0, Math.min(2, state.playerPos + dir));
+    }
+
+    function initGame() {
+        document.getElementById('startMenu').style.opacity = '0';
+        setTimeout(() => document.getElementById('startMenu').style.display = 'none', 500);
+        
+        state.running = true;
+        state.tiles = [];
+        state.score = 0;
+        state.stability = 100;
+        state.speedMultiplier = 1;
+        state.cameraY = 0;
+        
+        // Initial path
+        for(let i=0; i<30; i++) spawnRow(i);
+        
+        requestAnimationFrame(loop);
+    }
+
+    function spawnRow(yIndex) {
+        const row = [true, true, true];
+        if (yIndex > 10) { // Give a longer safe start
+            const holeCount = Math.random() > 0.7 ? 2 : 1;
+            for(let i=0; i<holeCount; i++) {
+                row[Math.floor(Math.random() * 3)] = false;
+            }
+            if (!row[0] && !row[1] && !row[2]) row[Math.floor(Math.random()*3)] = true;
+        }
+        state.tiles.push({ y: yIndex, lanes: row });
+    }
+
+    function loop() {
+        if (!state.running) return;
+        update();
+        draw();
+        requestAnimationFrame(loop);
+    }
+
+    function update() {
+        const moveStep = SPEED * state.speedMultiplier;
+        state.cameraY += moveStep;
+        state.score += 1;
+        state.speedMultiplier += 0.00008; // Slightly slower difficulty ramp
+
+        // Tile management
+        const lastTileY = state.tiles[state.tiles.length - 1].y;
+        if (state.cameraY > (lastTileY - 20) * TILE_H) {
+            spawnRow(lastTileY + 1);
+        }
+        if (state.tiles.length > 60) state.tiles.shift();
+
+        // Collision Check - Adjusted to match the new player offset
+        const currentPlayerTileY = Math.floor(state.cameraY / TILE_H) + PLAYER_TILE_OFFSET;
+        const currentTile = state.tiles.find(t => t.y === currentPlayerTileY);
+        
+        if (currentTile && !currentTile.lanes[state.playerPos]) {
+            state.stability -= 1.5; // Slightly more forgiving drain
+            if (state.stability <= 0) gameOver();
+        } else if (state.stability < 100) {
+            state.stability += 0.15;
+        }
+
+        document.getElementById('score').innerText = Math.floor(state.score).toString().padStart(5, '0');
+        document.getElementById('stability').innerText = Math.floor(state.stability) + '%';
+    }
+
+    function project(lane, yIndex) {
+        const xOffset = (lane - 1) * TILE_W;
+        const yOffset = (yIndex * TILE_H) - state.cameraY;
+        
+        return {
+            x: canvas.width / 2 + xOffset - (yOffset * 0.5),
+            y: canvas.height * 0.75 - (yOffset * 0.5) // Lowered the base height slightly for better visibility
+        };
+    }
+
+    function draw() {
+        ctx.fillStyle = state.colors.bg;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw Tiles
+        for (let i = state.tiles.length - 1; i >= 0; i--) {
+            const tile = state.tiles[i];
+            tile.lanes.forEach((exists, lane) => {
+                if (!exists) return;
+                
+                const pos = project(lane, tile.y);
+                
+                ctx.beginPath();
+                ctx.moveTo(pos.x, pos.y);
+                ctx.lineTo(pos.x + TILE_W/2, pos.y + TILE_H/2);
+                ctx.lineTo(pos.x, pos.y + TILE_H);
+                ctx.lineTo(pos.x - TILE_W/2, pos.y + TILE_H/2);
+                ctx.closePath();
+
+                ctx.fillStyle = (tile.y % 2 === 0) ? '#1a0033' : '#220044';
+                ctx.fill();
+                
+                ctx.strokeStyle = state.colors.primary;
+                ctx.lineWidth = 1;
+                ctx.stroke();
+
+                if (Math.random() > 0.98) {
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = state.colors.secondary;
+                    ctx.stroke();
+                    ctx.shadowBlur = 0;
+                }
+            });
+        }
+
+        // Draw Player at the new offset
+        const pPos = project(state.playerPos, Math.floor(state.cameraY / TILE_H) + PLAYER_TILE_OFFSET);
+        
+        ctx.save();
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = state.colors.secondary;
+        ctx.fillStyle = state.colors.secondary;
+        
+        ctx.beginPath();
+        ctx.moveTo(pPos.x, pPos.y - 10);
+        ctx.lineTo(pPos.x + 15, pPos.y - 20);
+        ctx.lineTo(pPos.x, pPos.y - 30);
+        ctx.lineTo(pPos.x - 15, pPos.y - 20);
+        ctx.fill();
+        
+        ctx.fillStyle = '#00aaaa';
+        ctx.beginPath();
+        ctx.moveTo(pPos.x - 15, pPos.y - 20);
+        ctx.lineTo(pPos.x, pPos.y - 10);
+        ctx.lineTo(pPos.x, pPos.y + 5);
+        ctx.lineTo(pPos.x - 15, pPos.y - 5);
+        ctx.fill();
+        
+        ctx.restore();
+    }
+
+    function gameOver() {
+        state.running = false;
+        const menu = document.getElementById('startMenu');
+        menu.style.display = 'flex';
+        menu.style.opacity = '1';
+        menu.querySelector('h1').innerText = "CONNECTION_LOST";
+        menu.querySelector('p').innerText = "FINAL SCORE: " + Math.floor(state.score);
+        menu.querySelector('button').innerText = "Retry";
+    }
+
+</script>
+</body>
+</html>
